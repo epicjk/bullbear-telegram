@@ -8,10 +8,18 @@ import { useBullBearGame, GamePhase, BetSide, RoundHistory, BetRecord, RoadmapCe
 import { sounds, initAudio, startGameMusic, stopGameMusic } from './hooks/useSound';
 import { COLORS, GAME_CONFIG, getThemeColors } from './constants/theme';
 import { hapticImpact, hapticNotification, hapticSelection } from '@/lib/telegram';
+import { useLanguage, LanguageToggle } from '@/lib/i18n';
+import { translations, Language } from '@/lib/translations';
 import { SettingsModal, HistoryModal, StatsModal, HowToPlayModal, WalletModal, RoundDetailModal } from './modals';
 import { formatPrice, formatPriceChange, formatPercent, formatBalance } from './utils/formatters';
+import { useLegal } from '@/contexts/LegalContext';
+import { BettingDisclaimerModal } from '@/components/legal';
 import { EffectSettings, DEFAULT_EFFECT_SETTINGS } from './effects/types';
 import { GlowPulse, WaveSweep, RadialShockwave, Confetti, CountUp, Heartbeat } from './effects';
+import { AIBattleMode, UserBotBet, FollowState, BotState, AI_BOTS, generateBotPrediction, BOT_PAYOUT_MULTIPLIER, getActualMultiplier } from './AIBattle';
+
+// Game Mode Type
+type GameMode = 'direct' | 'aiBattle';
 
 interface BullBearGameProps {
   balance: number;
@@ -37,8 +45,36 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
   const [betInput, setBetInput] = useState('$0');
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Language from global context
+  const { lang, setLang, toggleLang } = useLanguage();
+  
+  // Game Mode State
+  const [gameMode, setGameMode] = useState<GameMode>('direct');
+  const [userBotBet, setUserBotBet] = useState<UserBotBet | null>(null);
+  const [lastRoundResult, setLastRoundResult] = useState<'bull' | 'bear' | 'tie' | null>(null);
+  
+  // AI Battle - Follow State
+  const [followState, setFollowState] = useState<FollowState | null>(null);
+  const [followBetPlaced, setFollowBetPlaced] = useState(false); // 현재 라운드에 팔로우 베팅이 완료되었는지
+  const followBetRef = useRef<{ round: number; amount: number; prediction: 'bull' | 'bear' } | null>(null);
+  
+  // Bot States (managed in BullBearGame for result processing)
+  const [botStates, setBotStates] = useState<Map<string, BotState>>(() => {
+    const initial = new Map<string, BotState>();
+    AI_BOTS.forEach(bot => {
+      initial.set(bot.id, {
+        id: bot.id,
+        prediction: null,
+        winStreak: 0,
+        loseStreak: 0,
+        totalWins: Math.floor(Math.random() * 50) + 10,
+        totalLosses: Math.floor(Math.random() * 50) + 10,
+      });
+    });
+    return initial;
+  });
+  
   // Settings State
-  const [lang, setLang] = useState<'ko' | 'en'>('ko');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundVolume, setSoundVolume] = useState(0.7);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -65,6 +101,11 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
   const [scale, setScale] = useState(1);
   const [isMobile, setIsMobile] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Legal / Disclaimer State
+  const { hasAgreedToBettingDisclaimer } = useLegal();
+  const [showBettingDisclaimer, setShowBettingDisclaimer] = useState(false);
+  const [pendingBet, setPendingBet] = useState<{ side: BetSide; amount?: number } | null>(null);
 
   // Victory Overlay State - HTML과 동일한 승리 연출
   const [victoryVisible, setVictoryVisible] = useState(false);
@@ -146,6 +187,100 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
 
   const game = useBullBearGame();
 
+  // Generate bot predictions at round start (betting phase begins)
+  useEffect(() => {
+    if (game.gamePhase === 'betting' && game.timeRemaining >= 24) {
+      // 새 라운드 시작 - 팔로우 베팅 리셋
+      setFollowBetPlaced(false);
+      
+      // 봇 예측 생성
+      const recentResults = game.roadmapHistory.slice(-10).map(r => r.result);
+      setBotStates(prev => {
+        const newStates = new Map(prev);
+        AI_BOTS.forEach(bot => {
+          const state = newStates.get(bot.id)!;
+          const prediction = generateBotPrediction(bot, recentResults, game.priceChange);
+          newStates.set(bot.id, {
+            ...state,
+            prediction,
+          });
+        });
+        return newStates;
+      });
+    }
+  }, [game.gamePhase, game.timeRemaining, game.roadmapHistory, game.priceChange]);
+  
+  // Auto-bet for followed bot (at betting phase start, after predictions are generated)
+  useEffect(() => {
+    if (game.gamePhase === 'betting' && game.timeRemaining >= 20 && game.timeRemaining <= 23 && followState && !followBetPlaced) {
+      const followingBotState = botStates.get(followState.botId);
+      if (!followingBotState || !followingBotState.prediction) return;
+      
+      // 잔액 확인
+      if (balance < followState.betPerRound) {
+        // 잔액 부족 - 팔로우 중단
+        showToast('warning', lang === 'ko' ? '잔액 부족! 팔로우가 중단되었습니다.' : 'Insufficient balance! Follow stopped.');
+        playSound(sounds.cancelBet);
+        setFollowState(null);
+        return;
+      }
+      
+      // 자동 베팅 처리
+      const betAmount = followState.betPerRound;
+      const prediction = followingBotState.prediction;
+      
+      // 잔액에서 차감
+      const newBalance = balance - betAmount;
+      setBalance(newBalance);
+      onBalanceChange?.(newBalance);
+      localStorage.setItem('bitbattle_balance', newBalance.toString());
+      
+      // 팔로우 베팅 정보 저장
+      followBetRef.current = {
+        round: game.currentRound,
+        amount: betAmount,
+        prediction: prediction,
+      };
+      setFollowBetPlaced(true);
+      
+      // 효과음 + 토스트
+      playSound(sounds.placeBet);
+      hapticImpact('light');
+      showToast('info', lang === 'ko' 
+        ? `🤖 자동 베팅: ${prediction === 'bull' ? '🐂 BULL' : '🐻 BEAR'} $${betAmount}` 
+        : `🤖 Auto-bet: ${prediction === 'bull' ? '🐂 BULL' : '🐻 BEAR'} $${betAmount}`);
+    }
+  }, [game.gamePhase, game.timeRemaining, game.currentRound, followState, followBetPlaced, botStates, balance, lang]);
+  
+  // Update bot states on round result
+  useEffect(() => {
+    if (lastRoundResult && game.gamePhase === 'betting') {
+      setBotStates(prev => {
+        const newStates = new Map(prev);
+        newStates.forEach((state, botId) => {
+          if (state.prediction === lastRoundResult) {
+            // 봇이 맞춤
+            newStates.set(botId, {
+              ...state,
+              totalWins: state.totalWins + 1,
+              winStreak: state.winStreak + 1,
+              loseStreak: 0,
+            });
+          } else if (state.prediction !== null && lastRoundResult !== 'tie') {
+            // 봇이 틀림
+            newStates.set(botId, {
+              ...state,
+              totalLosses: state.totalLosses + 1,
+              loseStreak: state.loseStreak + 1,
+              winStreak: 0,
+            });
+          }
+        });
+        return newStates;
+      });
+    }
+  }, [lastRoundResult, game.gamePhase]);
+
   // Toast 함수들
   const showToast = useCallback((type: ToastType, message: string, amount?: number, duration = 3000) => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -181,7 +316,8 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
     const savedSound = localStorage.getItem('bitbattle_sound');
     const savedVolume = localStorage.getItem('bitbattle_volume');
     const savedTheme = localStorage.getItem('bitbattle_theme');
-    const savedLang = localStorage.getItem('bitbattle_lang');
+    // lang is now managed by LanguageProvider, skip loading here
+    // const savedLang = localStorage.getItem('bitbattle_lang');
     const savedWallet = localStorage.getItem('bitbattle_wallet');
     const savedBetAlert = localStorage.getItem('bitbattle_betAlert');
     const savedEffects = localStorage.getItem('bitbattle_effects');
@@ -189,7 +325,8 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
     if (savedSound !== null) setSoundEnabled(savedSound !== 'false');
     if (savedVolume !== null) setSoundVolume(parseFloat(savedVolume));
     if (savedTheme !== null) setIsDarkMode(savedTheme !== 'light');
-    if (savedLang !== null) setLang(savedLang as 'ko' | 'en');
+    // lang is managed by LanguageProvider
+    // if (savedLang !== null) setLang(savedLang as 'ko' | 'en');
     if (savedBetAlert !== null) setBetAlertEnabled(savedBetAlert !== 'false');
     if (savedEffects) {
       try {
@@ -219,15 +356,15 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
     }
   }, [onBalanceChange]);
 
-  // Save settings to localStorage
+  // Save settings to localStorage (lang is managed by LanguageProvider)
   useEffect(() => {
     localStorage.setItem('bitbattle_sound', String(soundEnabled));
     localStorage.setItem('bitbattle_volume', String(soundVolume));
     localStorage.setItem('bitbattle_theme', isDarkMode ? 'dark' : 'light');
-    localStorage.setItem('bitbattle_lang', lang);
+    // lang is saved by LanguageProvider, no need to save here
     localStorage.setItem('bitbattle_betAlert', String(betAlertEnabled));
     localStorage.setItem('bitbattle_effects', JSON.stringify(effectSettings));
-  }, [soundEnabled, soundVolume, isDarkMode, lang, betAlertEnabled, effectSettings]);
+  }, [soundEnabled, soundVolume, isDarkMode, betAlertEnabled, effectSettings]);
 
   // Play sound helper
   const playSound = useCallback((soundFn: (vol: number) => void) => {
@@ -365,11 +502,8 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
     setBetInput(formatBetValue(Math.min(numValue, balance, 10000)));
   };
 
-  // Place bet - HTML과 동일한 로직
-  // overrideAmount: REPEAT/x2 버튼에서 직접 금액을 전달할 때 사용
-  const handlePlaceBet = (side: BetSide, overrideAmount?: number) => {
-    if (game.gamePhase !== 'betting') return;
-
+  // Execute the actual bet placement
+  const executeBet = (side: BetSide, overrideAmount?: number) => {
     const amount = overrideAmount !== undefined ? overrideAmount : parseBetValue(betInput);
     if (amount <= 0) return;
 
@@ -393,6 +527,38 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
       setLastCompletedBet(completedBet);
       localStorage.setItem('bitbattle_lastCompletedBet', JSON.stringify(completedBet));
     }
+  };
+
+  // Place bet - HTML과 동일한 로직
+  // overrideAmount: REPEAT/x2 버튼에서 직접 금액을 전달할 때 사용
+  const handlePlaceBet = (side: BetSide, overrideAmount?: number) => {
+    if (game.gamePhase !== 'betting') return;
+
+    const amount = overrideAmount !== undefined ? overrideAmount : parseBetValue(betInput);
+    if (amount <= 0) return;
+
+    // Check if user has agreed to betting disclaimer this session
+    if (!hasAgreedToBettingDisclaimer) {
+      setPendingBet({ side, amount: overrideAmount });
+      setShowBettingDisclaimer(true);
+      return;
+    }
+
+    executeBet(side, overrideAmount);
+  };
+
+  // Handle betting disclaimer confirmation
+  const handleBettingDisclaimerConfirm = () => {
+    setShowBettingDisclaimer(false);
+    if (pendingBet) {
+      executeBet(pendingBet.side, pendingBet.amount);
+      setPendingBet(null);
+    }
+  };
+
+  const handleBettingDisclaimerCancel = () => {
+    setShowBettingDisclaimer(false);
+    setPendingBet(null);
   };
 
   // Cancel bet
@@ -901,6 +1067,91 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
         const roundResult = lastRoadmap.result;
         const closePrice = lastRoadmap.endPrice;
         const savedBet = prevBetRef.current;
+        
+        // AI Battle 모드용 마지막 라운드 결과 업데이트
+        setLastRoundResult(roundResult);
+        
+        // ============ 팔로우 베팅 결과 정산 ============
+        const savedFollowBet = followBetRef.current;
+        if (savedFollowBet && savedFollowBet.round === lastRoadmap.round) {
+          const followWon = savedFollowBet.prediction === roundResult;
+          const isTie = roundResult === 'tie';
+          
+          // 고정 배당률 1.95배 (5% 수수료) - 직접 베팅과 동일
+          const multiplier = BOT_PAYOUT_MULTIPLIER; // 1.95
+          
+          if (isTie) {
+            // TIE: 베팅금액 환불
+            const newBalance = balance + savedFollowBet.amount;
+            setBalance(newBalance);
+            onBalanceChange?.(newBalance);
+            localStorage.setItem('bitbattle_balance', newBalance.toString());
+            showToast('tie', lang === 'ko' ? '🤖 TIE! 베팅금 환불' : '🤖 TIE! Bet Refunded', savedFollowBet.amount, 3000);
+            playSound(sounds.tie);
+          } else if (followWon) {
+            // 승리: 고정 1.95배 배당 (5% 수수료)
+            const netProfit = savedFollowBet.amount * (multiplier - 1);
+            const totalPayout = savedFollowBet.amount * multiplier;
+            
+            // 잔액 업데이트
+            setBalance(prev => {
+              const newBal = prev + totalPayout;
+              onBalanceChange?.(newBal);
+              localStorage.setItem('bitbattle_balance', newBal.toString());
+              return newBal;
+            });
+            
+            // 오늘 손익 업데이트
+            setTodayPnl(prev => {
+              const newPnl = prev + netProfit;
+              localStorage.setItem('bitbattle_todayPnl', newPnl.toString());
+              localStorage.setItem('bitbattle_todayPnlDate', new Date().toDateString());
+              return newPnl;
+            });
+            
+            // 승리 효과 (직접 베팅과 동일)
+            hapticNotification('success');
+            if (savedFollowBet.prediction === 'bull') {
+              playSound(sounds.bullWin);
+            } else {
+              playSound(sounds.bearWin);
+            }
+            
+            // 승리 토스트
+            showToast('win', lang === 'ko' ? '🤖 봇 베팅 승리!' : '🤖 Bot Bet Won!', netProfit, 4000);
+            
+            // 코인 카운팅 사운드
+            if (soundEnabled) {
+              const coinInterval = sounds.coinCount(soundVolume);
+              if (coinInterval) {
+                setTimeout(() => {
+                  clearInterval(coinInterval);
+                  sounds.coinCountEnd(soundVolume);
+                }, 1000);
+              }
+            }
+          } else {
+            // 패배: 베팅금액은 이미 차감됨
+            // 오늘 손익 업데이트
+            setTodayPnl(prev => {
+              const newPnl = prev - savedFollowBet.amount;
+              localStorage.setItem('bitbattle_todayPnl', newPnl.toString());
+              localStorage.setItem('bitbattle_todayPnlDate', new Date().toDateString());
+              return newPnl;
+            });
+            
+            // 패배 효과 (직접 베팅과 동일)
+            playSound(sounds.lose);
+            hapticNotification('error');
+            
+            setTimeout(() => {
+              showToast('lose', lang === 'ko' ? '🤖 봇 베팅 패배' : '🤖 Bot Bet Lost', savedFollowBet.amount, 3000);
+            }, 500);
+          }
+          
+          // 팔로우 베팅 정보 리셋
+          followBetRef.current = null;
+        }
 
         // 1. 라운드 결과 토스트 (BULL WIN / BEAR WIN / TIE) - 항상 표시
         if (roundResult === 'bull') {
@@ -1180,46 +1431,25 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
     }, 300);
   }, []);
 
-  const i18n = {
-    ko: {
-      yourBet: '내 베팅',
-      noPosition: '베팅 없음',
-      potentialWin: '예상 수익',
-      placeBet: '베팅하기',
-      priceUp: '가격 상승',
-      priceDown: '가격 하락',
-      sessionStats: '세션 통계',
-      bullWins: 'BULL 승리',
-      bearWins: 'BEAR 승리',
-      todayPnl: '오늘 손익',
-      totalRounds: '총 라운드',
-      winRate: '승률',
-      cancel: '취소',
-      minBet: '최소: $1',
-      maxBet: '최대: $10,000',
-      balance: '잔액',
-    },
-    en: {
-      yourBet: 'YOUR BET',
-      noPosition: 'NO POSITION',
-      potentialWin: 'POTENTIAL WIN',
-      placeBet: 'PLACE YOUR BET',
-      priceUp: 'Price Goes UP',
-      priceDown: 'Price Goes DOWN',
-      sessionStats: 'SESSION STATS',
-      bullWins: 'BULL WINS',
-      bearWins: 'BEAR WINS',
-      todayPnl: 'TODAY P&L',
-      totalRounds: 'TOTAL ROUNDS',
-      winRate: 'WIN RATE',
-      cancel: 'CANCEL',
-      minBet: 'Min: $1',
-      maxBet: 'Max: $10,000',
-      balance: 'BALANCE',
-    }
+  // Use translations from global translations file
+  const t = {
+    yourBet: translations.betting.yourBet[lang],
+    noPosition: translations.betting.noPosition[lang],
+    potentialWin: translations.betting.potentialWin[lang],
+    placeBet: translations.betting.placeBet[lang],
+    priceUp: translations.betting.priceUp[lang],
+    priceDown: translations.betting.priceDown[lang],
+    sessionStats: translations.stats.sessionStats[lang],
+    bullWins: translations.stats.bullWins[lang],
+    bearWins: translations.stats.bearWins[lang],
+    todayPnl: translations.stats.todayPnl[lang],
+    totalRounds: translations.stats.totalRounds[lang],
+    winRate: translations.stats.winRate[lang],
+    cancel: translations.common.cancel[lang],
+    minBet: translations.betting.minBet[lang],
+    maxBet: translations.betting.maxBet[lang],
+    balance: translations.common.balance[lang],
   };
-
-  const t = i18n[lang];
   const result = game.priceChange > 0 ? 'bull' : game.priceChange < 0 ? 'bear' : 'tie';
   const userWon = game.userBet === result;
 
@@ -1371,11 +1601,12 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
             {!isMobile && (
               <>
                 <button
-                  onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}
-                  className={`w-12 h-12 text-base rounded-xl border ${cardBorder} flex items-center justify-center font-bold hover:border-[#a855f7] hover:-translate-y-0.5 transition-all`}
+                  onClick={toggleLang}
+                  className={`w-12 h-12 text-xl rounded-xl border ${cardBorder} flex items-center justify-center font-bold hover:border-[#a855f7] hover:-translate-y-0.5 transition-all`}
                   style={{ backgroundColor: cardColor }}
+                  title={lang === 'ko' ? 'Switch to English' : '한국어로 변경'}
                 >
-                  {lang === 'ko' ? '한' : 'EN'}
+                  {lang === 'ko' ? '🇰🇷' : '🇺🇸'}
                 </button>
                 <button
                   onClick={() => isWalletConnected ? disconnectWallet() : setWalletModalOpen(true)}
@@ -1404,29 +1635,58 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
           </div>
         </header>
 
+        {/* ============ GAME MODE TOGGLE - 풀너비 탭 스타일 ============ */}
+        <div className={`w-full ${isMobile ? 'px-2 pt-0.5 pb-0.5' : 'px-4 pt-0.5 pb-0.5'}`}>
+          <div
+            className={`grid grid-cols-2 w-full ${isMobile ? 'p-0.5 rounded-lg gap-0.5' : 'p-1 rounded-xl gap-1'} border ${cardBorder}`}
+            style={{ backgroundColor: cardColor }}
+          >
+            <button
+              onClick={() => { playSound(sounds.click); setGameMode('direct'); }}
+              className={`${isMobile ? 'py-2.5 text-xs' : 'py-3 text-sm'} rounded-lg font-['Orbitron'] font-bold transition-all ${
+                gameMode === 'direct'
+                  ? 'bg-gradient-to-r from-[#a855f7] to-[#ec4899] text-white shadow-lg'
+                  : `${textColor} hover:bg-white/5`
+              }`}
+            >
+              {translations.gameMode.directBetting[lang]}
+            </button>
+            <button
+              onClick={() => { playSound(sounds.click); setGameMode('aiBattle'); }}
+              className={`${isMobile ? 'py-2.5 text-xs' : 'py-3 text-sm'} rounded-lg font-['Orbitron'] font-bold transition-all ${
+                gameMode === 'aiBattle'
+                  ? 'bg-gradient-to-r from-[#06b6d4] to-[#3b82f6] text-white shadow-lg'
+                  : `${textColor} hover:bg-white/5`
+              }`}
+            >
+              {translations.gameMode.aiBattle[lang]}
+            </button>
+          </div>
+        </div>
+
         {/* ============ MAIN CONTENT ============ */}
-        {/* 반응형: 모바일 flex 세로 스택 (헤더7%, 차트45%, 히스토리15%, 베팅33%), 태블릿/데스크탑 7:3 그리드 */}
+        {/* 반응형: 모바일 flex 세로 스택, 태블릿/데스크탑 65:35 그리드 (차트 65%, 베팅 35%) */}
         <main
-          className={`flex-1 ${isMobile ? 'flex flex-col' : 'grid grid-cols-[70fr_30fr]'} gap-1 sm:gap-3 lg:gap-4 ${isMobile ? 'px-1 pt-0.5 pb-1' : 'p-3 lg:p-4'} overflow-hidden`}
+          className={`flex-1 ${isMobile ? 'flex flex-col' : 'grid grid-cols-[65fr_35fr]'} gap-1 sm:gap-3 lg:gap-4 ${isMobile ? 'px-1 pt-0.5 pb-1' : 'p-3 lg:p-4'} overflow-hidden`}
         >
           {/* Left Section - Chart & Roadmap */}
-          <div className={`flex flex-col gap-1 sm:gap-2 min-h-0`} style={isMobile ? { flex: '40 1 0%' } : {}}>
+          <div className={`flex flex-col gap-1 sm:gap-2 min-h-0 min-w-0 overflow-hidden`} style={isMobile ? { flex: '40 1 0%' } : {}}>
             {/* Chart Card */}
             <div className={`rounded-lg sm:rounded-xl border ${cardBorder} flex flex-col min-h-0 flex-1`} style={{ backgroundColor: cardColor }}>
-              {/* Chart Header - 반응형 (모바일 10% 축소) */}
-              <div className={`relative flex items-center justify-between ${isMobile ? 'px-2 py-1' : 'px-3 sm:px-4 lg:px-6 py-2 sm:py-3'} border-b ${cardBorder} flex-shrink-0`}>
+              {/* Chart Header - 반응형 (모바일 10% 축소, 전체 10% 축소 + 패딩 20% 축소) */}
+              <div className={`relative flex items-center justify-between ${isMobile ? 'px-1.5 py-0.5' : 'px-2 sm:px-3 lg:px-5 py-1.5 sm:py-2'} border-b ${cardBorder} flex-shrink-0`}>
                 {/* Left: BTC Info + Price */}
-                <div className="flex items-center gap-2 sm:gap-4 lg:gap-8">
+                <div className="flex items-center gap-1.5 sm:gap-3 lg:gap-6">
                   {/* BTC Icon + Label */}
-                  <div className="flex items-center gap-2 sm:gap-3">
-                    <div className={`${isMobile ? 'w-6 h-6 text-xs' : 'w-8 h-8 sm:w-10 sm:h-10 lg:w-[45px] lg:h-[45px] text-sm sm:text-lg lg:text-xl'} rounded-lg bg-gradient-to-br from-[#f7931a] to-[#ffab40] flex items-center justify-center text-white font-bold shadow-lg`}>₿</div>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <div className={`${isMobile ? 'w-5 h-5 text-[10px]' : 'w-7 h-7 sm:w-9 sm:h-9 lg:w-10 lg:h-10 text-xs sm:text-base lg:text-lg'} rounded-lg bg-gradient-to-br from-[#f7931a] to-[#ffab40] flex items-center justify-center text-white font-bold shadow-lg`}>₿</div>
                     <div className={isMobile ? 'hidden' : ''}>
-                      <h3 className={`font-['Orbitron'] font-bold text-sm lg:text-lg ${textColor}`}>BTC/USDT</h3>
-                      <p className={`text-[10px] lg:text-xs ${mutedColor}`}>Real-time Price</p>
+                      <h3 className={`font-['Orbitron'] font-bold text-xs lg:text-base ${textColor}`}>BTC/USDT</h3>
+                      <p className={`text-[9px] lg:text-[11px] ${mutedColor}`}>Real-time Price</p>
                     </div>
                   </div>
                   {/* Price Display - 반응형 (모바일 10% 축소) */}
-                  <div className={`font-['Orbitron'] font-bold ${isMobile ? 'text-base' : 'text-lg sm:text-xl lg:text-[2rem]'} italic ${
+                  <div className={`font-['Orbitron'] font-bold ${isMobile ? 'text-sm' : 'text-base sm:text-lg lg:text-[1.8rem]'} italic ${
                     game.gamePhase === 'game' || game.gamePhase === 'countdown'
                       ? (game.priceChange >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]')
                       : 'text-[#fbbf24]'
@@ -1435,18 +1695,18 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
                   </div>
                 </div>
 
-                {/* Binance Badge - 우측 고정 (절대 위치) */}
-                <div className="hidden lg:flex absolute left-1/2 top-1/2 -translate-y-1/2 items-center gap-2 px-5 py-2.5 rounded-full border-2 border-[#f3ba2f] bg-transparent">
-                  <div className="w-[22px] h-[22px] rounded-full bg-[#f3ba2f] flex items-center justify-center text-black font-bold text-xs">₿</div>
-                  <span className="font-['Orbitron'] text-[#f3ba2f] text-sm font-bold tracking-wide">Powered by BINANCE</span>
+                {/* Binance Badge - 우측 고정 (절대 위치) - 10% 축소 + 패딩 20% 축소 */}
+                <div className="hidden lg:flex absolute left-1/2 top-1/2 -translate-y-1/2 items-center gap-1.5 px-4 py-2 rounded-full border-2 border-[#f3ba2f] bg-transparent">
+                  <div className="w-5 h-5 rounded-full bg-[#f3ba2f] flex items-center justify-center text-black font-bold text-[11px]">₿</div>
+                  <span className="font-['Orbitron'] text-[#f3ba2f] text-xs font-bold tracking-wide">Powered by BINANCE</span>
                 </div>
 
-                {/* Right: 연결점 + Phase Badge + Timer - 반응형 (모바일 10% 축소) */}
-                <div className={`flex items-center ${isMobile ? 'gap-1.5' : 'gap-2 sm:gap-3 lg:gap-5'}`}>
+                {/* Right: 연결점 + Phase Badge + Timer - 반응형 (10% 축소 + 패딩 20% 축소) */}
+                <div className={`flex items-center ${isMobile ? 'gap-1' : 'gap-1.5 sm:gap-2 lg:gap-4'}`}>
                   {/* 연결 상태 점 */}
-                  <div className={`${isMobile ? 'w-2 h-2' : 'w-2.5 h-2.5 sm:w-3 sm:h-3 lg:w-3.5 lg:h-3.5'} rounded-full ${game.isConnected ? 'bg-[#22c55e]' : 'bg-[#ef4444]'}`} style={{ boxShadow: game.isConnected ? '0 0 10px #22c55e' : '0 0 10px #ef4444' }} />
-                  {/* Phase Badge - 반응형 (모바일 10% 축소) */}
-                  <div className={`${isMobile ? 'px-2 py-1 text-[10px]' : 'px-3 sm:px-4 lg:px-6 py-1.5 sm:py-2 text-xs sm:text-sm'} rounded-full font-['Orbitron'] font-bold tracking-wider ${
+                  <div className={`${isMobile ? 'w-1.5 h-1.5' : 'w-2 h-2 sm:w-2.5 sm:h-2.5 lg:w-3 lg:h-3'} rounded-full ${game.isConnected ? 'bg-[#22c55e]' : 'bg-[#ef4444]'}`} style={{ boxShadow: game.isConnected ? '0 0 10px #22c55e' : '0 0 10px #ef4444' }} />
+                  {/* Phase Badge - 반응형 (10% 축소 + 패딩 20% 축소) */}
+                  <div className={`${isMobile ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 sm:px-3 lg:px-5 py-1 sm:py-1.5 text-[11px] sm:text-xs'} rounded-full font-['Orbitron'] font-bold tracking-wider ${
                     game.gamePhase === 'countdown' ? 'bg-[#ef4444] text-white' :
                     'bg-[#22c55e] text-white'
                   }`}>
@@ -1454,13 +1714,13 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
                      game.gamePhase === 'countdown' ? 'LOCKING' :
                      game.gamePhase === 'game' ? 'LIVE' : 'RESULT'}
                   </div>
-                  {/* Timer Box - 반응형 (모바일 10% 축소) */}
+                  {/* Timer Box - 반응형 (10% 축소) */}
                   <div
-                    className={`font-['Orbitron'] font-black ${isMobile ? 'text-lg' : 'text-xl sm:text-2xl lg:text-[2rem]'} rounded-lg flex items-center justify-center ${
+                    className={`font-['Orbitron'] font-black ${isMobile ? 'text-base' : 'text-lg sm:text-xl lg:text-[1.8rem]'} rounded-lg flex items-center justify-center ${
                       game.gamePhase === 'countdown' ? 'bg-[#1a1a2e] border-2 border-[#ef4444] text-[#ef4444]' :
                       'bg-[#1a1a2e] border-2 border-[#22c55e] text-[#22c55e]'
                     }`}
-                    style={{ width: isMobile ? '50px' : '90px', height: isMobile ? '28px' : '46px' }}
+                    style={{ width: isMobile ? '45px' : '80px', height: isMobile ? '25px' : '40px' }}
                   >
                     {game.timeRemaining}
                   </div>
@@ -1838,7 +2098,47 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
           )}
 
           {/* Right Section - Betting Panel - 반응형 (모바일: 33% 영역) */}
-          <div className={`flex flex-col gap-1 sm:gap-2.5 min-h-0`} style={isMobile ? { flex: '48 1 0%' } : {}}>
+          <div className={`flex flex-col gap-1 sm:gap-2.5 min-h-0 min-w-0 overflow-hidden`} style={isMobile ? { flex: '48 1 0%' } : {}}>
+            
+            {/* ============ AI BATTLE MODE ============ */}
+            {gameMode === 'aiBattle' ? (
+              <AIBattleMode
+                balance={balance}
+                gamePhase={game.gamePhase}
+                timeRemaining={game.timeRemaining}
+                currentRound={game.currentRound}
+                recentResults={game.roadmapHistory.slice(-10).map(r => r.result)}
+                priceChange={game.priceChange}
+                lastRoundResult={lastRoundResult}
+                isDarkMode={isDarkMode}
+                isMobile={isMobile}
+                followState={followState}
+                onStartFollow={(botId, betPerRound) => {
+                  if (betPerRound > balance) {
+                    showToast('warning', lang === 'ko' ? '잔액이 부족합니다' : 'Insufficient balance');
+                    return;
+                  }
+                  setFollowState({ botId, betPerRound });
+                  playSound(sounds.placeBet);
+                  hapticImpact('medium');
+                  const bot = AI_BOTS.find(b => b.id === botId);
+                  showToast('info', lang === 'ko' 
+                    ? `🤖 ${bot?.name} 팔로우 시작! $${betPerRound}/라운드` 
+                    : `🤖 Following ${bot?.name}! $${betPerRound}/round`);
+                }}
+                onStopFollow={() => {
+                  setFollowState(null);
+                  setFollowBetPlaced(false);
+                  followBetRef.current = null;
+                  playSound(sounds.cancelBet);
+                  showToast('info', lang === 'ko' ? '팔로우가 중단되었습니다' : 'Follow stopped');
+                }}
+                botStates={botStates}
+                playSound={playSound}
+              />
+            ) : (
+            /* ============ DIRECT BETTING MODE ============ */
+            <>
             {/* Current Bet Card - 모바일: 확장 버전 (50-60% 확대) */}
             {isMobile ? (
               <div
@@ -2193,6 +2493,8 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
                 </div>
               </div>
             </div>
+            </>
+            )}
           </div>
         </main>
       </div>
@@ -2452,6 +2754,13 @@ export function BullBearGame({ balance: initialBalance, onBalanceChange }: BullB
         onClose={() => setWalletModalOpen(false)}
         onConnect={connectWallet}
         lang={lang}
+      />
+
+      {/* ============ BETTING DISCLAIMER MODAL ============ */}
+      <BettingDisclaimerModal
+        isOpen={showBettingDisclaimer}
+        onConfirm={handleBettingDisclaimerConfirm}
+        onCancel={handleBettingDisclaimerCancel}
       />
 
       {/* ============ TOAST CONTAINER ============ */}

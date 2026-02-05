@@ -291,6 +291,59 @@ body {
   100% { transform: translateY(-100px) rotate(720deg); opacity: 0; }
 }
 
+/* Bot Winning Effect - 이긴 봇 카드 효과 */
+@keyframes botWinnerGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.5), 0 0 20px rgba(34, 197, 94, 0.3), 0 0 30px rgba(34, 197, 94, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.8), 0 0 40px rgba(34, 197, 94, 0.5), 0 0 60px rgba(34, 197, 94, 0.3);
+  }
+}
+
+@keyframes botWinnerPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+@keyframes botWinnerBorder {
+  0%, 100% { border-color: rgba(34, 197, 94, 0.6); }
+  50% { border-color: rgba(34, 197, 94, 1); }
+}
+
+@keyframes botWinnerShine {
+  0% { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.bot-winner-effect {
+  animation: botWinnerGlow 1.5s ease-in-out infinite, botWinnerPulse 1s ease-in-out infinite, botWinnerBorder 1s ease-in-out infinite;
+  border: 2px solid rgba(34, 197, 94, 0.8) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.bot-winner-effect::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.2), transparent);
+  animation: botWinnerShine 2s linear infinite;
+  pointer-events: none;
+}
+
+.bot-winner-effect::after {
+  content: '🏆';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 16px;
+  animation: botWinnerPulse 0.8s ease-in-out infinite;
+}
+
 /* Last 5 seconds heartbeat effect */
 @keyframes heartbeat {
   0%, 100% { transform: scale(1); }

@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBalance } from '@/contexts/BalanceContext';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { BullBearGame } from '@/components/bullvsbear';
+import { Footer } from '@/components/legal';
 import { showBackButton, closeApp } from '@/lib/telegram';
 
 export default function HomePage() {
@@ -35,5 +36,12 @@ export default function HomePage() {
     );
   }
 
-  return <BullBearGame balance={balance} />;
+  return (
+    <div className="flex flex-col min-h-screen">
+      <div className="flex-1">
+        <BullBearGame balance={balance} />
+      </div>
+      <Footer />
+    </div>
+  );
 }

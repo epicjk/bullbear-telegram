@@ -165,6 +165,42 @@ export function SettingsModal({
           </div>
         </div>
 
+        {/* Legal Section */}
+        <div className="pt-3 border-t border-white/10">
+          <div className="text-sm font-semibold text-gray-400 mb-2">
+            ⚖️ {lang === 'ko' ? '법률 정보' : 'Legal'}
+          </div>
+          <div className="space-y-2">
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between py-2 px-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+            >
+              <span className="text-white text-sm">{lang === 'ko' ? '서비스 이용약관' : 'Terms of Service'}</span>
+              <span className="text-gray-500">→</span>
+            </a>
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between py-2 px-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+            >
+              <span className="text-white text-sm">{lang === 'ko' ? '개인정보 처리방침' : 'Privacy Policy'}</span>
+              <span className="text-gray-500">→</span>
+            </a>
+            <a
+              href="/disclaimer"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between py-2 px-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+            >
+              <span className="text-white text-sm">{lang === 'ko' ? '면책조항' : 'Disclaimer'}</span>
+              <span className="text-gray-500">→</span>
+            </a>
+          </div>
+        </div>
+
         {/* Version */}
         <div className="text-center text-xs text-gray-500 pt-4 border-t border-white/5">
           BitBattle <span className="text-[#fbbf24] font-['Orbitron']">v1.0.0</span>

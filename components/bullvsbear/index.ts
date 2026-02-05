@@ -6,3 +6,5 @@ export { RoadmapGrid } from './RoadmapGrid';
 export { BettingPanel } from './BettingPanel';
 export { VictoryOverlay } from './VictoryOverlay';
 export { BullBearGame } from './BullBearGame';
+export { AIBattleMode, AI_BOTS, generateBotPrediction, BOT_PAYOUT_MULTIPLIER, BOT_FEE_PERCENT, calculateBotWinRate, getActualMultiplier } from './AIBattle';
+export type { AIBot, BotState, BotStyle, BotBias, BotPrediction, UserBotBet, FollowState } from './AIBattle';

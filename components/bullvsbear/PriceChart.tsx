@@ -159,32 +159,32 @@ export function PriceChart({
   return (
     <div className="flex flex-col h-full">
       {/* Chart Header */}
-      <div className="flex justify-between items-center mb-2 px-1">
+      <div className="flex justify-between items-center mb-1.5 px-0.5">
         {/* BTC Info */}
-        <div className="flex items-center gap-2 md:gap-3">
-          <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-[#f7931a] to-[#ffab40] flex items-center justify-center shadow-[0_4px_12px_rgba(247,147,26,0.3)]">
-            <span className="text-white font-black text-sm md:text-base">₿</span>
+        <div className="flex items-center gap-1.5 md:gap-2">
+          <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-[#f7931a] to-[#ffab40] flex items-center justify-center shadow-[0_4px_12px_rgba(247,147,26,0.3)]">
+            <span className="text-white font-black text-xs md:text-sm">₿</span>
           </div>
           <div>
-            <h3 className="font-['Orbitron'] text-xs md:text-sm font-bold text-white">BTC/USDT</h3>
-            <p className="text-[10px] md:text-xs text-gray-500">Bitcoin</p>
+            <h3 className="font-['Orbitron'] text-[10px] md:text-xs font-bold text-white">BTC/USDT</h3>
+            <p className="text-[9px] md:text-[10px] text-gray-500">Bitcoin</p>
           </div>
         </div>
 
         {/* Price Display */}
         <div className="text-right">
-          <div className={`font-['Orbitron'] text-lg md:text-xl font-bold ${priceChange >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+          <div className={`font-['Orbitron'] text-base md:text-lg font-bold ${priceChange >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
             ${currentPrice.toFixed(2)}
           </div>
-          <div className={`text-xs ${priceChange >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+          <div className={`text-[11px] ${priceChange >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
             {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)} ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(3)}%)
           </div>
         </div>
 
         {/* Binance Badge */}
-        <div className="hidden md:flex items-center gap-1.5 px-2 py-1 bg-[#f3ba2f]/10 border border-[#f3ba2f]/30 rounded-md">
-          <div className="w-4 h-4 rounded-full bg-[#f3ba2f] flex items-center justify-center text-[8px] font-bold text-black">B</div>
-          <span className="font-['Orbitron'] text-[10px] font-semibold text-[#f3ba2f]">
+        <div className="hidden md:flex items-center gap-1 px-1.5 py-0.5 bg-[#f3ba2f]/10 border border-[#f3ba2f]/30 rounded-md">
+          <div className="w-3.5 h-3.5 rounded-full bg-[#f3ba2f] flex items-center justify-center text-[7px] font-bold text-black">B</div>
+          <span className="font-['Orbitron'] text-[9px] font-semibold text-[#f3ba2f]">
             {isSimulation ? 'SIMULATION' : 'BINANCE'}
           </span>
         </div>
