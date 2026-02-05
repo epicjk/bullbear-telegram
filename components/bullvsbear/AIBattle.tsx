@@ -326,8 +326,8 @@ export function AIBattleMode({
         </div>
       )}
       
-      {/* Bot Cards Grid - 1x3 horizontal layout */}
-      <div className={`grid grid-cols-3 ${isMobile ? 'gap-0.5' : 'gap-1.5'}`}>
+      {/* Bot Cards Grid - 반응형: 모바일 가로3개, 데스크톱 세로1열 */}
+      <div className={`grid grid-cols-3 md:grid-cols-1 md:max-w-sm md:mx-auto ${isMobile ? 'gap-0.5' : 'gap-1.5 md:gap-2'}`}>
         {AI_BOTS.map(bot => {
           const state = botStates.get(bot.id);
           if (!state) return null;
@@ -345,7 +345,7 @@ export function AIBattleMode({
           return (
             <div
               key={bot.id}
-              className={`relative rounded-lg border transition-all overflow-hidden ${
+              className={`relative rounded-lg md:rounded-xl border transition-all overflow-hidden ${
                 isWinner
                   ? 'border-[#22c55e] shadow-[0_0_20px_rgba(34,197,94,0.4)]'
                   : isFollowing
@@ -373,23 +373,23 @@ export function AIBattleMode({
               )}
               
               {/* Bot Info */}
-              <div className="flex items-center gap-1.5 mb-1 overflow-hidden">
-                <span className={`${isMobile ? 'text-xl' : 'text-2xl'} flex-shrink-0`}>{bot.emoji}</span>
+              <div className="flex items-center gap-1.5 md:gap-3 mb-1 md:mb-2 overflow-hidden">
+                <span className={`${isMobile ? 'text-xl' : 'text-2xl md:text-3xl'} flex-shrink-0`}>{bot.emoji}</span>
                 <div className="text-left flex-1 min-w-0 overflow-hidden">
                   <div className="flex items-center gap-1">
-                    <span className={`font-['Orbitron'] font-bold ${isMobile ? 'text-[10px]' : 'text-xs'} ${textColor} truncate block`}>
+                    <span className={`font-['Orbitron'] font-bold ${isMobile ? 'text-[10px]' : 'text-xs md:text-sm'} ${textColor} truncate block`}>
                       {bot.name}
                     </span>
                   </div>
-                  <div className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} ${mutedColor} truncate block`}>
+                  <div className={`${isMobile ? 'text-[8px]' : 'text-[10px] md:text-xs'} ${mutedColor} truncate block`}>
                     {bot.description[lang]}
                   </div>
                 </div>
               </div>
               
               {/* Stats - 실시간 승률 표시 */}
-              <div className={`flex items-center justify-between ${isMobile ? 'text-[8px]' : 'text-[10px]'} mb-0.5 overflow-hidden`}>
-                <div className="flex items-center gap-0.5 min-w-0 flex-shrink overflow-hidden">
+              <div className={`flex items-center justify-between ${isMobile ? 'text-[8px]' : 'text-[10px] md:text-xs'} mb-0.5 md:mb-1 overflow-hidden`}>
+                <div className="flex items-center gap-0.5 md:gap-1 min-w-0 flex-shrink overflow-hidden">
                   <span className={`${mutedColor} truncate`}>
                     {lang === 'ko' ? '승률' : 'Win'}: <span className={winRate >= 50 ? 'text-[#22c55e]' : 'text-[#ef4444]'}>{winRate}%</span>
                   </span>
@@ -402,20 +402,20 @@ export function AIBattleMode({
                 </div>
                 <div className="flex items-center gap-0.5 flex-shrink-0">
                   {state.winStreak > 0 && (
-                    <span className={`text-[#22c55e] ${isMobile ? 'text-[10px]' : 'text-xs'}`}>🔥{state.winStreak}</span>
+                    <span className={`text-[#22c55e] ${isMobile ? 'text-[10px]' : 'text-xs md:text-sm'}`}>🔥{state.winStreak}</span>
                   )}
                   {state.loseStreak > 2 && (
-                    <span className={`text-[#ef4444] ${isMobile ? 'text-[10px]' : 'text-xs'}`}>💀{state.loseStreak}</span>
+                    <span className={`text-[#ef4444] ${isMobile ? 'text-[10px]' : 'text-xs md:text-sm'}`}>💀{state.loseStreak}</span>
                   )}
                 </div>
               </div>
               
               {/* 배당률 (고정 1.95배) */}
-              <div className={`flex items-center justify-between py-0.5 px-1 rounded ${isMobile ? 'mb-0.5' : 'mb-1'} overflow-hidden`} style={{ backgroundColor: bgColor }}>
-                <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} ${mutedColor} truncate`}>
+              <div className={`flex items-center justify-between py-0.5 md:py-1 px-1 md:px-2 rounded ${isMobile ? 'mb-0.5' : 'mb-1 md:mb-2'} overflow-hidden`} style={{ backgroundColor: bgColor }}>
+                <span className={`${isMobile ? 'text-[8px]' : 'text-[10px] md:text-xs'} ${mutedColor} truncate`}>
                   {lang === 'ko' ? '배당' : 'Payout'}
                 </span>
-                <span className={`font-['Orbitron'] font-bold ${isMobile ? 'text-xs' : 'text-sm'} text-[#fbbf24] flex-shrink-0`}>
+                <span className={`font-['Orbitron'] font-bold ${isMobile ? 'text-xs' : 'text-sm md:text-base'} text-[#fbbf24] flex-shrink-0`}>
                   x{BOT_PAYOUT_MULTIPLIER}
                 </span>
               </div>
@@ -424,7 +424,7 @@ export function AIBattleMode({
               <button
                 onClick={() => handleFollowClick(bot.id)}
                 disabled={isFollowing || !state.prediction}
-                className={`w-full ${isMobile ? 'py-1' : 'py-1.5'} rounded-lg font-['Orbitron'] font-bold ${isMobile ? 'text-[10px]' : 'text-xs'} transition-all active:scale-[0.98] overflow-hidden truncate ${
+                className={`w-full ${isMobile ? 'py-1' : 'py-1.5 md:py-2'} rounded-lg font-['Orbitron'] font-bold ${isMobile ? 'text-[10px]' : 'text-xs md:text-sm'} transition-all active:scale-[0.98] overflow-hidden truncate ${
                   isFollowing
                     ? 'bg-[#fbbf24]/20 text-[#fbbf24] border border-[#fbbf24]/50 cursor-default'
                     : !state.prediction
